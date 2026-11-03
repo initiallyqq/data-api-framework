@@ -1,0 +1,25 @@
+name: test
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    # A real DolphinDB for the tests that log in to one (test/upstream).
+    services:
+      dolphindb:
+        image: registry.cn-hangzhou.aliyuncs.com/dolphindbit/dolphindb:v2.00.12.11
+        ports:
+          - 8848:8848
+    env:
+      DATA_API_E2E_DOLPHINDB_ADDRESS: 127.0.0.1:8848
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: test -z "$(gofmt -l .)"
+      - run: go vet ./...
+      - run: go test ./...
