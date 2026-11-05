@@ -30,11 +30,18 @@ func (itemLayout) Key(row item) string { return row.Group + "\x00" + row.Name }
 func (itemLayout) Replace(ctx context.Context, conn *sql.Conn, rows []item) error {
 	if _, err := conn.ExecContext(ctx, `
 		DROP TABLE IF EXISTS items;
-		CREATE TABLE items (grp TEXT NOT NULL, name TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY (grp, name));`); err != nil {
+		CREATE TABLE items (grp TEXT NOT NULL, name TEXT NOT NULL, value TEXT NOT NULL,
+			PRIMARY KEY (grp, name));`); err != nil {
 		return err
 	}
 	for _, row := range rows {
-		if _, err := conn.ExecContext(ctx, `INSERT INTO items VALUES (?, ?, ?)`, row.Group, row.Name, row.Value); err != nil {
+		if _, err := conn.ExecContext(
+			ctx,
+			`INSERT INTO items VALUES (?, ?, ?)`,
+			row.Group,
+			row.Name,
+			row.Value,
+		); err != nil {
 			return err
 		}
 	}
@@ -43,7 +50,13 @@ func (itemLayout) Replace(ctx context.Context, conn *sql.Conn, rows []item) erro
 
 func (itemLayout) Load(ctx context.Context, q replica.Queryer) ([]item, error) {
 	var tables int
-	if err := q.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE name = 'items'`).Scan(&tables); err != nil || tables == 0 {
+	if err := q.QueryRowContext(
+		ctx,
+		`SELECT count(*) FROM sqlite_master WHERE name = 'items'`,
+	).Scan(
+		&tables,
+	); err != nil ||
+		tables == 0 {
 		return nil, err
 	}
 	result, err := q.QueryContext(ctx, `SELECT grp, name, value FROM items`)
@@ -75,7 +88,11 @@ func (failingLayout) Replace(ctx context.Context, conn *sql.Conn, _ []item) erro
 
 func openItems(t *testing.T, dir string, layout replica.Layout[item]) *replica.Store[item] {
 	t.Helper()
-	store, err := replica.Open(filepath.Join(dir, "copy.db"), filepath.Join(dir, "backup", "last-good.db"), 7, layout)
+	files := replica.Files{
+		Path:       filepath.Join(dir, "copy.db"),
+		BackupPath: filepath.Join(dir, "backup", "last-good.db"),
+	}
+	store, err := replica.Open(files, 7, layout)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,7 +150,11 @@ func TestAFreshCopyHasNothingToServe(t *testing.T) {
 		t.Fatalf("fresh state = %+v", state)
 	}
 	called := false
-	if err := store.Read(context.Background(), func(replica.Queryer) error { called = true; return nil }); !errors.Is(err, replica.ErrNoData) || called {
+	if err := store.Read(
+		context.Background(),
+		func(replica.Queryer) error { called = true; return nil },
+	); !errors.Is(err, replica.ErrNoData) ||
+		called {
 		t.Fatalf("read before the first synchronization = %v (reader called: %v), want ErrNoData", err, called)
 	}
 	if err := store.Migrate(context.Background()); err != nil {
@@ -149,7 +170,8 @@ func TestMigrateRefusesAFileItDidNotWrite(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			dir := t.TempDir()
-			store, err := replica.Open(filepath.Join(dir, "copy.db"), filepath.Join(dir, "last-good.db"), 7, replica.Layout[item](itemLayout{}))
+			files := replica.Files{Path: filepath.Join(dir, "copy.db"), BackupPath: filepath.Join(dir, "last-good.db")}
+			store, err := replica.Open(files, 7, replica.Layout[item](itemLayout{}))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -183,7 +205,11 @@ func TestSynchronizeRefusesAnswersThatWouldReplaceTheCopyWithAWrongOne(t *testin
 			t.Fatalf("%s: a refused answer changed the state %+v -> %+v", name, before, after)
 		}
 	}
-	if _, err := store.Synchronize(ctx, []item{{Group: "g", Name: "n"}, {Group: "g", Name: "n"}}, time.Now()); err == nil ||
+	if _, err := store.Synchronize(
+		ctx,
+		[]item{{Group: "g", Name: "n"}, {Group: "g", Name: "n"}},
+		time.Now(),
+	); err == nil ||
 		!strings.Contains(err.Error(), "g/n") {
 		t.Fatalf("the refusal must name the key: %v", err)
 	}
@@ -224,7 +250,8 @@ func TestOnlyAVisibleChangeMovesTheDataVersion(t *testing.T) {
 		t.Fatalf("identical synchronization = %+v, %v", result, err)
 	}
 	after := mustState(t, store)
-	if after.Digest != before.Digest || !after.DataChangedAt.Equal(before.DataChangedAt) || !after.LastSourceSuccessAt.Equal(first.Add(time.Hour)) {
+	if after.Digest != before.Digest || !after.DataChangedAt.Equal(before.DataChangedAt) ||
+		!after.LastSourceSuccessAt.Equal(first.Add(time.Hour)) {
 		t.Fatalf("an identical synchronization moved the data version or missed the check: %+v -> %+v", before, after)
 	}
 
@@ -232,7 +259,10 @@ func TestOnlyAVisibleChangeMovesTheDataVersion(t *testing.T) {
 		"value changed": items("a", "b", "x"),
 		"row dropped":   items("a", "b"),
 		"row added":     items("a", "b", "c", "d"),
-		"key changed":   {{Group: "h", Name: "n0", Value: "a"}, {Group: "g", Name: "n1", Value: "b"}, {Group: "g", Name: "n2", Value: "c"}},
+		"key changed": {
+			{Group: "h", Name: "n0", Value: "a"}, {Group: "g", Name: "n1", Value: "b"},
+			{Group: "g", Name: "n2", Value: "c"},
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			store := openItems(t, t.TempDir(), itemLayout{})
@@ -310,7 +340,12 @@ func TestTheBackupFollowsTheCopy(t *testing.T) {
 	if err := store.CheckBackup(ctx, digest); err == nil {
 		t.Fatal("a missing backup passed")
 	}
-	if result, err := store.Synchronize(ctx, items("a"), time.Now()); err != nil || result.Changed || result.BackupError != nil {
+	if result, err := store.Synchronize(
+		ctx,
+		items("a"),
+		time.Now(),
+	); err != nil || result.Changed ||
+		result.BackupError != nil {
 		t.Fatalf("resync = %+v, %v", result, err)
 	}
 	if err := store.CheckBackup(ctx, digest); err != nil {
@@ -335,7 +370,12 @@ func TestTheBackupFollowsTheCopy(t *testing.T) {
 	if err := os.WriteFile(filepath.Dir(backupPath), nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if result, err := store.Synchronize(ctx, items("b"), time.Now()); err != nil || !result.Changed || result.BackupError == nil {
+	if result, err := store.Synchronize(
+		ctx,
+		items("b"),
+		time.Now(),
+	); err != nil || !result.Changed ||
+		result.BackupError == nil {
 		t.Fatalf("synchronization with an unwritable backup = %+v, %v", result, err)
 	}
 }

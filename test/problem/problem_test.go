@@ -16,7 +16,8 @@ func TestAProblemIsAlwaysOneTheCatalogueKnows(t *testing.T) {
 	body, _ := json.Marshal(found)
 	parsed, ok := problem.Parse(body)
 	if !ok || parsed.Code != problem.CategoryNotFound || parsed.Status != 404 || parsed.Detail != "category not found: fund; available: a_share, b_share" ||
-		strings.Join(parsed.Available, ",") != "a_share,b_share" || !strings.Contains(string(body), `"error":"category not found`) {
+		strings.Join(parsed.Available, ",") != "a_share,b_share" ||
+		!strings.Contains(string(body), `"error":"category not found`) {
 		t.Fatalf("not found = %s / %+v", body, parsed)
 	}
 	for _, body := range []string{"<html>502</html>", `{"status":502}`, `{"code":"X"}`, `[]`} {

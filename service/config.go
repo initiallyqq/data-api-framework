@@ -29,6 +29,8 @@ type Config struct {
 	MaxStaleness             time.Duration `yaml:"maxStaleness"`
 }
 
+// LoadConfig reads and validates the configuration file at path;
+// defaultListenAddr is the listen address when it names none.
 func LoadConfig(path, defaultListenAddr string) (Config, error) {
 	content, err := os.ReadFile(path)
 	if err != nil {

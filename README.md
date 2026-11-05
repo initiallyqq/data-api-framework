@@ -4,7 +4,7 @@
 每个服务把 DolphinDB 的表同步成本地 SQLite 副本，用 HTTP 提供一个查询，另有一个 MCP 适配器把这个查询转成一个工具。
 
 ```bash
-go get github.com/initiallyqq/data-api-framework@v0.1.0
+go get github.com/initiallyqq/data-api-framework@v0.2.0
 ```
 
 ## 包
@@ -17,7 +17,8 @@ go get github.com/initiallyqq/data-api-framework@v0.1.0
 | `upstream` | 读 DolphinDB 上游表 |
 | `replica` | SQLite 副本和同步 |
 | `service` | 数据服务程序骨架 |
-| `adapter` | MCP 适配器程序骨架；版本号构建时注入：`-ldflags "-X github.com/initiallyqq/data-api-framework/adapter.Version=..."` |
+| `adapter` | MCP 适配器程序骨架 |
+| `buildinfo` | 构建时注入的版本号：`-ldflags "-X github.com/initiallyqq/data-api-framework/buildinfo.Version=..."` |
 
 ## 测试
 

@@ -31,7 +31,10 @@ func TestSyncRecordsWhatHappenedForTheHealthEndpoints(t *testing.T) {
 		t.Fatalf("sync = %+v, %v", result, err)
 	}
 	state := monitor.Snapshot()
-	if state.LastSuccessAt.Before(started) || !state.LastAttemptAt.Equal(state.LastSuccessAt) || state.LastError != "" || state.InProgress || state.StorageError != "" {
+	if state.LastSuccessAt.Before(started) || !state.LastAttemptAt.Equal(state.LastSuccessAt) ||
+		state.LastError != "" ||
+		state.InProgress ||
+		state.StorageError != "" {
 		t.Fatalf("after a success: %+v", state)
 	}
 	succeeded := state.LastSuccessAt
@@ -41,7 +44,8 @@ func TestSyncRecordsWhatHappenedForTheHealthEndpoints(t *testing.T) {
 		t.Fatalf("source failure = %v, want it to wrap the cause", err)
 	}
 	state = monitor.Snapshot()
-	if !state.LastSuccessAt.Equal(succeeded) || !strings.Contains(state.LastError, "DolphinDB is down") || state.InProgress {
+	if !state.LastSuccessAt.Equal(succeeded) || !strings.Contains(state.LastError, "DolphinDB is down") ||
+		state.InProgress {
 		t.Fatalf("after a source failure: %+v", state)
 	}
 
@@ -83,7 +87,9 @@ func TestOneAdministratorSyncAtATime(t *testing.T) {
 	go func() { done <- syncer.Run(ctx) }()
 	defer func() {
 		cancel()
-		<-done
+		if err := <-done; !errors.Is(err, context.Canceled) {
+			t.Errorf("Run after cancel = %v, want context.Canceled", err)
+		}
 	}()
 
 	if err := syncer.RequestSync(); err != nil {

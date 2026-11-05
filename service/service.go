@@ -23,20 +23,20 @@ type Spec[R any] struct {
 	Name              string // the binary's name, in logs and errors
 	Noun              string // what errors call the data: "calendar" or "mapping"
 	DefaultListenAddr string
-	Open              func(path, backupPath string) (*replica.Store[R], error)
+	Open              func(replica.Files) (*replica.Store[R], error)
 	Fetch             func(context.Context, upstream.Source) ([]R, error)
 	// Register adds the service's query routes to server, answering from
 	// store.
 	Register func(server *Server, store *replica.Store[R])
 }
 
-// Handler is the service's HTTP surface over store, as Main serves it.
-func (s Spec[R]) Handler(config Config, store *replica.Store[R], monitor *replica.Monitor, syncer interface{ RequestSync() error }) (http.Handler, error) {
-	server, err := newServer(s.Noun, config, store, monitor, syncer)
+// Handler is the service's HTTP surface over r, as Main serves it.
+func (s Spec[R]) Handler(config Config, r Replica[R]) (http.Handler, error) {
+	server, err := newServer(s.Noun, config, r)
 	if err != nil {
 		return nil, err
 	}
-	s.Register(server, store)
+	s.Register(server, r.Store)
 	return server.mux, nil
 }
 
@@ -65,23 +65,48 @@ func (s Spec[R]) run(args []string) error {
 	if err != nil {
 		return err
 	}
-	store, err := s.Open(config.DatabasePath, config.BackupPath)
+	store, err := s.Open(replica.Files{Path: config.DatabasePath, BackupPath: config.BackupPath})
 	if err != nil {
 		return err
 	}
 	defer store.Close()
-
-	startup, cancelStartup := context.WithTimeout(context.Background(), 30*time.Minute)
-	defer cancelStartup()
-	if err := store.Migrate(startup); err != nil {
+	syncer, err := s.start(config, store)
+	if err != nil {
 		return err
 	}
+	handler, err := s.Handler(config, Replica[R]{Store: store, Monitor: syncer.Monitor, Syncer: syncer})
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+	go func() {
+		if err := syncer.Run(ctx); err != nil && ctx.Err() == nil {
+			fmt.Printf("%s synchronization stopped: %v\n", s.Name, err)
+			cancel()
+		}
+	}()
+	server := endpoint.Server(config.ListenAddr, handler, config.RequestTimeout, config.RequestTimeout+10*time.Second)
+	return endpoint.Run(ctx, s.Name, server)
+}
+
+// start readies store to serve: its schema, its recorded state carried into
+// the monitor, and one synchronization. That synchronization may fail only
+// when the copy already holds data to serve. The returned syncer keeps the
+// copy current once run.
+func (s Spec[R]) start(config Config, store *replica.Store[R]) (*replica.Syncer[R], error) {
+	startup, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+	if err := store.Migrate(startup); err != nil {
+		return nil, err
+	}
 	if err := store.Ping(startup); err != nil {
-		return fmt.Errorf("connect SQLite: %w", err)
+		return nil, fmt.Errorf("connect SQLite: %w", err)
 	}
 	state, err := store.State(startup)
 	if err != nil {
-		return fmt.Errorf("read SQLite state: %w", err)
+		return nil, fmt.Errorf("read SQLite state: %w", err)
 	}
 	monitor := &replica.Monitor{}
 	monitor.RestoreSuccess(state.LastSourceSuccessAt)
@@ -105,7 +130,7 @@ func (s Spec[R]) run(args []string) error {
 	result, err := syncer.Sync(startup)
 	switch {
 	case err != nil && !state.HasData:
-		return fmt.Errorf("initial synchronization: %w", err)
+		return nil, fmt.Errorf("initial synchronization: %w", err)
 	case err != nil:
 		fmt.Printf("%s initial synchronization failed; serving existing SQLite state: %v\n", s.Name, err)
 	default:
@@ -114,18 +139,5 @@ func (s Spec[R]) run(args []string) error {
 			fmt.Printf("%s initial backup failed: %v\n", s.Name, result.BackupError)
 		}
 	}
-	handler, err := s.Handler(config, store, monitor, syncer)
-	if err != nil {
-		return err
-	}
-
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer cancel()
-	go func() {
-		if err := syncer.Run(ctx); err != nil && ctx.Err() == nil {
-			fmt.Printf("%s synchronization stopped: %v\n", s.Name, err)
-			cancel()
-		}
-	}()
-	return endpoint.Run(ctx, s.Name, config.ListenAddr, handler, config.RequestTimeout, config.RequestTimeout+10*time.Second)
+	return syncer, nil
 }

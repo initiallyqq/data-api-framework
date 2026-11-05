@@ -29,7 +29,16 @@ type Server struct {
 	mux         *http.ServeMux
 }
 
-func newServer(noun string, config Config, store interface{ Ping(context.Context) error }, monitor *replica.Monitor, syncer interface{ RequestSync() error }) (*Server, error) {
+// Replica is what a service answers from: its copy, the synchronization
+// state the health endpoints report, and what the administrator's sync
+// request queues on.
+type Replica[R any] struct {
+	Store   *replica.Store[R]
+	Monitor *replica.Monitor
+	Syncer  interface{ RequestSync() error }
+}
+
+func newServer[R any](noun string, config Config, r Replica[R]) (*Server, error) {
 	content, err := os.ReadFile(config.AdminTokenFile)
 	if err != nil {
 		return nil, fmt.Errorf("load admin token: %w", err)
@@ -39,7 +48,7 @@ func newServer(noun string, config Config, store interface{ Ping(context.Context
 		return nil, errors.New("load admin token: token file is empty")
 	}
 	s := &Server{
-		noun: noun, config: config, store: store, monitor: monitor, syncer: syncer,
+		noun: noun, config: config, store: r.Store, monitor: r.Monitor, syncer: r.Syncer,
 		adminDigest: sha256.Sum256([]byte(token)), mux: http.NewServeMux(),
 	}
 	s.mux.HandleFunc("/healthz", s.handleHealth)
@@ -190,6 +199,7 @@ func (s *Server) health(ctx context.Context, includeDetails bool) (healthRespons
 		response.DolphinDB.Status = "failed"
 	case !state.LastSuccessAt.IsZero():
 		response.DolphinDB.Status = "healthy"
+	default: // never synchronized: "unknown"
 	}
 	if state.LastSuccessAt.IsZero() {
 		response.Status = "unhealthy"

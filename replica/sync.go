@@ -31,6 +31,7 @@ type Snapshot struct {
 	InProgress    bool
 }
 
+// Begin records a synchronization starting at at.
 func (m *Monitor) Begin(at time.Time) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -38,6 +39,7 @@ func (m *Monitor) Begin(at time.Time) {
 	m.inProgress = true
 }
 
+// Success records the synchronization that began at at as succeeded.
 func (m *Monitor) Success(at time.Time) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -46,6 +48,7 @@ func (m *Monitor) Success(at time.Time) {
 	m.inProgress = false
 }
 
+// Failure records the running synchronization as failed with err.
 func (m *Monitor) Failure(err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -74,6 +77,7 @@ func (m *Monitor) SetStorageError(err error) {
 	}
 }
 
+// Snapshot is the state now.
 func (m *Monitor) Snapshot() Snapshot {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -103,6 +107,8 @@ type Syncer[R any] struct {
 	active   bool
 }
 
+// Sync runs one synchronization now: it reads upstream and replaces the
+// copy, recording the outcome in the Monitor.
 func (s *Syncer[R]) Sync(ctx context.Context) (SyncResult, error) {
 	at := time.Now().UTC()
 	s.Monitor.Begin(at)

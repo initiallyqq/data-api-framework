@@ -12,4 +12,5 @@
 //   - replica: the SQLite copy of the source tables and its synchronization
 //   - service: a data service binary around its query
 //   - adapter: the MCP adapter binary that relays the query as one tool
+//   - buildinfo: the version the binary reports, stamped at build time
 package framework

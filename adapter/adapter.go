@@ -21,24 +21,25 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/initiallyqq/data-api-framework/buildinfo"
 	"github.com/initiallyqq/data-api-framework/endpoint"
 	"github.com/initiallyqq/data-api-framework/problem"
 	"github.com/initiallyqq/data-api-framework/timezone"
 )
 
-// Version is what an adapter reports as its version. The build sets it from
-// the release's git tag (-ldflags "-X data-api-framework/adapter.Version=$(git
-// describe)"); the source carries no version of its own.
-var Version = "dev"
-
+// Limits of an adapter.
 const (
-	DefaultTimeout  = 30 * time.Second
+	// DefaultTimeout is the longest a call to the service may take; a
+	// configured timeout above it is lowered to it.
+	DefaultTimeout = 30 * time.Second
+	// MaxRequestBytes is the largest MCP request body read.
 	MaxRequestBytes = 1 << 20
-	// The largest answer of the services today is about 2 MB; the limit
-	// leaves room for growth and for the
-	// result being carried twice (text and structured).
+	// MaxResponseBytes is the largest service answer relayed. The largest
+	// answer of the services today is about 2 MB; the limit leaves room for
+	// growth and for the result being carried twice (text and structured).
 	MaxResponseBytes = 16 << 20
-	MaxConcurrency   = 8
+	// MaxConcurrency is how many MCP requests are served at once.
+	MaxConcurrency = 8
 )
 
 // Spec is a service's MCP adapter: one read-only tool that relays the
@@ -126,7 +127,7 @@ func (a Spec) Handler(config Config) (http.Handler, error) {
 		http:    &http.Client{Timeout: config.RequestTimeout},
 		timeout: config.RequestTimeout,
 	}
-	server := mcp.NewServer(&mcp.Implementation{Name: a.Name, Version: Version}, &mcp.ServerOptions{
+	server := mcp.NewServer(&mcp.Implementation{Name: a.Name, Version: buildinfo.Version}, &mcp.ServerOptions{
 		// Only what is true: one fixed tool, so no listChanged; no log
 		// notifications (Logging is deprecated in 2026-07-28 and the SDK
 		// advertises it by default).
@@ -135,12 +136,15 @@ func (a Spec) Handler(config Config) (http.Handler, error) {
 	if err := a.Register(server, client); err != nil {
 		return nil, err
 	}
-	transport := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, &mcp.StreamableHTTPOptions{
-		Stateless:                    true,
-		JSONResponse:                 true,
-		MaxRequestBodyBytes:          MaxRequestBytes,
-		PropagateRequestCancellation: true,
-	})
+	transport := mcp.NewStreamableHTTPHandler(
+		func(*http.Request) *mcp.Server { return server },
+		&mcp.StreamableHTTPOptions{
+			Stateless:                    true,
+			JSONResponse:                 true,
+			MaxRequestBodyBytes:          MaxRequestBytes,
+			PropagateRequestCancellation: true,
+		},
+	)
 	allowed := make(map[string]bool, len(config.AllowedOrigins))
 	for _, origin := range config.AllowedOrigins {
 		allowed[origin] = true
@@ -164,7 +168,11 @@ func (a Spec) Handler(config Config) (http.Handler, error) {
 			defer func() { <-slots }()
 		default:
 			w.Header().Set("Retry-After", "1")
-			problem.Write(w, r, problem.New(problem.RateLimited, fmt.Sprintf("more than %d MCP requests in progress", MaxConcurrency)))
+			problem.Write(
+				w,
+				r,
+				problem.New(problem.RateLimited, fmt.Sprintf("more than %d MCP requests in progress", MaxConcurrency)),
+			)
 			return
 		}
 		payload, err := io.ReadAll(io.LimitReader(r.Body, MaxRequestBytes+1))
@@ -244,7 +252,10 @@ func (c *Client) get(ctx context.Context, path string) (int, []byte, error) {
 		return 0, nil, err
 	}
 	if len(payload) > MaxResponseBytes {
-		return 0, nil, problem.New(problem.ResponseTooLarge, fmt.Sprintf("%s service response exceeds %d bytes; %s", c.noun, MaxResponseBytes, c.narrow))
+		return 0, nil, problem.New(
+			problem.ResponseTooLarge,
+			fmt.Sprintf("%s service response exceeds %d bytes; %s", c.noun, MaxResponseBytes, c.narrow),
+		)
 	}
 	return response.StatusCode, payload, nil
 }
@@ -270,11 +281,22 @@ func (c *Client) Call(ctx context.Context, path string, query url.Values) *mcp.C
 		if answer, ok := problem.Parse(body); ok {
 			return ToolError(answer)
 		}
-		return ToolError(problem.New(problem.UpstreamError, fmt.Sprintf("%s service returned HTTP %d: %s", c.noun, status, summarize(body))))
+		return ToolError(
+			problem.New(
+				problem.UpstreamError,
+				fmt.Sprintf("%s service returned HTTP %d: %s", c.noun, status, summarize(body)),
+			),
+		)
+	default: // 2xx: the body is checked below
 	}
 	var rows []json.RawMessage
 	if json.Unmarshal(body, &rows) != nil || rows == nil {
-		return ToolError(problem.New(problem.UpstreamError, "decode "+c.noun+" service response: want an array of rows: "+summarize(body)))
+		return ToolError(
+			problem.New(
+				problem.UpstreamError,
+				"decode "+c.noun+" service response: want an array of rows: "+summarize(body),
+			),
+		)
 	}
 	result := &mcp.CallToolResult{
 		Content:           []mcp.Content{&mcp.TextContent{Text: string(body)}},
@@ -286,7 +308,12 @@ func (c *Client) Call(ctx context.Context, path string, query url.Values) *mcp.C
 	}
 	const jsonRPCEnvelopeAllowance = 1024
 	if len(encoded)+jsonRPCEnvelopeAllowance > MaxResponseBytes {
-		return ToolError(problem.New(problem.ResponseTooLarge, fmt.Sprintf("MCP tool response exceeds %d bytes; %s", MaxResponseBytes, c.narrow)))
+		return ToolError(
+			problem.New(
+				problem.ResponseTooLarge,
+				fmt.Sprintf("MCP tool response exceeds %d bytes; %s", MaxResponseBytes, c.narrow),
+			),
+		)
 	}
 	return result
 }
@@ -320,7 +347,12 @@ func ToolError(p *problem.Details) *mcp.CallToolResult {
 // parameter, is a programming error and stops the adapter from starting.
 func InputSchema(parameters []endpoint.Parameter, shapes map[string]*jsonschema.Schema) (*jsonschema.Schema, error) {
 	if len(shapes) != len(parameters) {
-		return nil, fmt.Errorf("%d argument shapes for %d parameters %v", len(shapes), len(parameters), endpoint.ParameterNames(parameters))
+		return nil, fmt.Errorf(
+			"%d argument shapes for %d parameters %v",
+			len(shapes),
+			len(parameters),
+			endpoint.ParameterNames(parameters),
+		)
 	}
 	schema := &jsonschema.Schema{
 		Type:                 "object",
@@ -343,6 +375,7 @@ func InputSchema(parameters []endpoint.Parameter, shapes map[string]*jsonschema.
 // OneOrMany decodes an argument OneOrManySchema declares.
 type OneOrMany []string
 
+// UnmarshalJSON reads one string or an array of strings.
 func (l *OneOrMany) UnmarshalJSON(data []byte) error {
 	var single string
 	if err := json.Unmarshal(data, &single); err == nil {
@@ -415,7 +448,9 @@ func (a Spec) Run(args []string) error {
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
-	return endpoint.Run(ctx, a.Name, config.ListenAddr, handler, config.RequestTimeout+5*time.Second, config.RequestTimeout+10*time.Second)
+	server := endpoint.Server(config.ListenAddr, handler,
+		config.RequestTimeout+5*time.Second, config.RequestTimeout+10*time.Second)
+	return endpoint.Run(ctx, a.Name, server)
 }
 
 // smoke drives the deployed endpoint the way an MCP client does: it
@@ -433,7 +468,7 @@ func (a Spec) smoke(args []string) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
-	session, err := mcp.NewClient(&mcp.Implementation{Name: a.Name + "-smoke", Version: Version}, nil).
+	session, err := mcp.NewClient(&mcp.Implementation{Name: a.Name + "-smoke", Version: buildinfo.Version}, nil).
 		Connect(ctx, &mcp.StreamableClientTransport{Endpoint: *endpoint}, nil)
 	if err != nil {
 		return fmt.Errorf("initialize MCP session: %w", err)
@@ -451,33 +486,42 @@ func (a Spec) smoke(args []string) error {
 		return fmt.Errorf("MCP tools/list = %v, want exactly %s", names, a.Tool)
 	}
 	test := a.Smoke(time.Now().In(timezone.Beijing).Format("2006-01-02"))
-	text, isError, err := callText(ctx, session, a.Tool, test.Good)
+	good, err := callText(ctx, session, &mcp.CallToolParams{Name: a.Tool, Arguments: test.Good})
 	if err != nil {
 		return err
 	}
+	text, isError := good.text, good.isError
 	var rows []json.RawMessage
 	if isError || json.Unmarshal([]byte(text), &rows) != nil || len(rows) == 0 {
 		return fmt.Errorf("MCP tool %s %v answered %s, want a non-empty array of rows", a.Tool, test.Good, text)
 	}
-	text, isError, err = callText(ctx, session, a.Tool, test.Bad)
+	bad, err := callText(ctx, session, &mcp.CallToolParams{Name: a.Tool, Arguments: test.Bad})
 	if err != nil {
 		return err
 	}
+	text, isError = bad.text, bad.isError
 	if answer, ok := problem.Parse([]byte(text)); !isError || !ok || answer.Code != test.BadCode {
 		return fmt.Errorf("MCP tool %s %v answered %s, want %s", a.Tool, test.Bad, text, test.BadCode)
 	}
 	return nil
 }
 
-func callText(ctx context.Context, session *mcp.ClientSession, tool string, arguments map[string]any) (string, bool, error) {
-	result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: tool, Arguments: arguments})
+// toolAnswer is the text of a tool's answer and whether it is a tool error.
+type toolAnswer struct {
+	text    string
+	isError bool
+}
+
+// callText makes the tool call and returns its answer.
+func callText(ctx context.Context, session *mcp.ClientSession, call *mcp.CallToolParams) (toolAnswer, error) {
+	result, err := session.CallTool(ctx, call)
 	if err != nil {
-		return "", false, fmt.Errorf("call MCP tool %s: %w", tool, err)
+		return toolAnswer{}, fmt.Errorf("call MCP tool %s: %w", call.Name, err)
 	}
 	for _, content := range result.Content {
 		if text, ok := content.(*mcp.TextContent); ok {
-			return text.Text, result.IsError, nil
+			return toolAnswer{text.Text, result.IsError}, nil
 		}
 	}
-	return "", result.IsError, nil
+	return toolAnswer{isError: result.IsError}, nil
 }

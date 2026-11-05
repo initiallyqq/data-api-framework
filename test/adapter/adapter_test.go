@@ -32,8 +32,12 @@ func testAdapter(tool string) adapter.Spec {
 		Tool:              "get_items",
 		Narrow:            "ask for fewer items",
 		Register: func(server *mcp.Server, client *adapter.Client) error {
-			arguments, err := adapter.InputSchema([]endpoint.Parameter{{Name: "name", Required: true}},
-				map[string]*jsonschema.Schema{"name": adapter.OneOrManySchema("One name or several.", jsonschema.Ptr(2))})
+			arguments, err := adapter.InputSchema(
+				[]endpoint.Parameter{{Name: "name", Required: true}},
+				map[string]*jsonschema.Schema{
+					"name": adapter.OneOrManySchema("One name or several.", jsonschema.Ptr(2)),
+				},
+			)
 			if err != nil {
 				return err
 			}
@@ -41,12 +45,20 @@ func testAdapter(tool string) adapter.Spec {
 				func(ctx context.Context, _ *mcp.CallToolRequest, args struct {
 					Name adapter.OneOrMany `json:"name"`
 				}) (*mcp.CallToolResult, any, error) {
-					return client.Call(ctx, "/v1/api/items", url.Values{"name": {strings.Join(args.Name, ",")}}), nil, nil
+					return client.Call(
+						ctx,
+						"/v1/api/items",
+						url.Values{"name": {strings.Join(args.Name, ",")}},
+					), nil, nil
 				})
 			return nil
 		},
 		Smoke: func(today string) adapter.SmokeTest {
-			return adapter.SmokeTest{Good: map[string]any{"name": "a"}, Bad: map[string]any{"name": "missing"}, BadCode: problem.ExchangeNotFound}
+			return adapter.SmokeTest{
+				Good:    map[string]any{"name": "a"},
+				Bad:     map[string]any{"name": "missing"},
+				BadCode: problem.ExchangeNotFound,
+			}
 		},
 	}
 }
@@ -70,36 +82,41 @@ func (f *fakeItems) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		case 0:
 			endpoint.WriteJSON(w, http.StatusOK, map[string]string{"status": "healthy"})
 		case -1:
-			w.Write([]byte("not json"))
+			_, _ = w.Write([]byte("not json"))
 		default:
-			endpoint.WriteJSON(w, f.health, map[string]string{"status": map[bool]string{true: "degraded", false: "unhealthy"}[f.health == 200]})
+			endpoint.WriteJSON(
+				w,
+				f.health,
+				map[string]string{"status": map[bool]string{true: "degraded", false: "unhealthy"}[f.health == 200]},
+			)
 		}
 		return
 	}
 	switch name := r.URL.Query().Get("name"); name {
 	case "a", "a,b":
 		if f.empty {
-			w.Write([]byte("[]\n"))
+			_, _ = w.Write([]byte("[]\n"))
 			return
 		}
-		w.Write([]byte(`[{"name":"a"}]` + "\n"))
+		_, _ = w.Write([]byte(`[{"name":"a"}]` + "\n"))
 	case "missing":
 		problem.Write(w, r, problem.NotFound(problem.ExchangeNotFound, "name", []string{"missing"}, []string{"a"}))
 	case "html":
 		w.WriteHeader(http.StatusBadGateway)
-		w.Write([]byte("<html>bad gateway \xff</html>"))
+		_, _ = w.Write([]byte("<html>bad gateway \xff</html>"))
 	case "object":
-		w.Write([]byte(`{"not":"an array"}`))
+		_, _ = w.Write([]byte(`{"not":"an array"}`))
 	case "slow":
 		time.Sleep(2 * time.Second)
 	case "huge":
-		w.Write(bytes.Repeat([]byte(" "), adapter.MaxResponseBytes+1))
+		_, _ = w.Write(bytes.Repeat([]byte(" "), adapter.MaxResponseBytes+1))
 	case "large":
 		fmt.Fprintf(w, `["%s"]`, strings.Repeat("x", adapter.MaxResponseBytes/2+1))
 	case "block":
 		f.blocked <- struct{}{}
 		<-f.release
-		w.Write([]byte("[]"))
+		_, _ = w.Write([]byte("[]"))
+	default: // an empty 200
 	}
 }
 
@@ -138,7 +155,10 @@ func session(t *testing.T, server *httptest.Server) *mcp.ClientSession {
 // much, or rows that make a tool result too large.
 func TestToolCallsRelayTheServiceAnswer(t *testing.T) {
 	fake := &fakeItems{}
-	s := session(t, startAdapter(t, testAdapter("get_items"), fake, adapter.Config{RequestTimeout: 500 * time.Millisecond}))
+	s := session(
+		t,
+		startAdapter(t, testAdapter("get_items"), fake, adapter.Config{RequestTimeout: 500 * time.Millisecond}),
+	)
 	call := func(name any) (string, *problem.Details) {
 		t.Helper()
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -182,7 +202,10 @@ func TestToolCallsRelayTheServiceAnswer(t *testing.T) {
 			t.Fatalf("%s = %+v, want %s %q", name, refusal, want.code, want.detail)
 		}
 	}
-	if _, refusal := call("missing"); strings.Join(refusal.Values, ",") != "missing" || strings.Join(refusal.Available, ",") != "a" {
+	if _, refusal := call(
+		"missing",
+	); strings.Join(refusal.Values, ",") != "missing" ||
+		strings.Join(refusal.Available, ",") != "a" {
 		t.Fatalf("the relayed problem lost its lists: %+v", refusal)
 	}
 	// Arguments the published schema refuses never reach the service.
@@ -229,14 +252,21 @@ func post(t *testing.T, server *httptest.Server, body []byte, origin string) *ht
 
 func TestTheMCPPathTakesOnlyBoundedPOSTs(t *testing.T) {
 	fake := &fakeItems{release: make(chan struct{}), blocked: make(chan struct{}, adapter.MaxConcurrency)}
-	server := startAdapter(t, testAdapter("get_items"), fake, adapter.Config{AllowedOrigins: []string{" https://ok.example ", ""}})
+	server := startAdapter(
+		t,
+		testAdapter("get_items"),
+		fake,
+		adapter.Config{AllowedOrigins: []string{" https://ok.example ", ""}},
+	)
 	isRefusal := func(response *http.Response, status int, code problem.Code) {
 		t.Helper()
 		var body map[string]any
 		_ = json.NewDecoder(response.Body).Decode(&body)
 		response.Body.Close()
-		if response.StatusCode != status || response.Header.Get("Content-Type") != problem.MediaType || body["code"] != string(code) ||
-			body["error"] != body["detail"] || body["message"] != body["detail"] {
+		if response.StatusCode != status || response.Header.Get("Content-Type") != problem.MediaType ||
+			body["code"] != string(code) ||
+			body["error"] != body["detail"] ||
+			body["message"] != body["detail"] {
 			t.Fatalf("want %d %s, got %d %v", status, code, response.StatusCode, body)
 		}
 	}
@@ -251,16 +281,24 @@ func TestTheMCPPathTakesOnlyBoundedPOSTs(t *testing.T) {
 		}
 		isRefusal(response, http.StatusMethodNotAllowed, problem.MethodNotAllowed)
 	}
-	initialize := []byte(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"t","version":"1"}}}`)
+	initialize := []byte(
+		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"t","version":"1"}}}`,
+	)
 	for _, origin := range []string{"", "https://ok.example"} {
 		if response := post(t, server, initialize, origin); response.StatusCode != http.StatusOK {
 			t.Fatalf("initialize from %q = %d", origin, response.StatusCode)
 		}
 	}
 	isRefusal(post(t, server, initialize, "https://untrusted.example"), http.StatusForbidden, problem.OriginNotAllowed)
-	isRefusal(post(t, server, bytes.Repeat([]byte("x"), adapter.MaxRequestBytes+1), ""), http.StatusRequestEntityTooLarge, problem.RequestTooLarge)
+	isRefusal(
+		post(t, server, bytes.Repeat([]byte("x"), adapter.MaxRequestBytes+1), ""),
+		http.StatusRequestEntityTooLarge,
+		problem.RequestTooLarge,
+	)
 
-	call := []byte(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"get_items","arguments":{"name":"block"}}}`)
+	call := []byte(
+		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"get_items","arguments":{"name":"block"}}}`,
+	)
 	var wg sync.WaitGroup
 	for range adapter.MaxConcurrency {
 		wg.Go(func() {
@@ -311,7 +349,8 @@ func TestAdapterHealthFollowsTheService(t *testing.T) {
 			var body bytes.Buffer
 			_, _ = body.ReadFrom(response.Body)
 			response.Body.Close()
-			if response.StatusCode != test.code || strings.TrimSpace(body.String()) != test.body || response.Header.Get("Cache-Control") != "no-store" {
+			if response.StatusCode != test.code || strings.TrimSpace(body.String()) != test.body ||
+				response.Header.Get("Cache-Control") != "no-store" {
 				t.Fatalf("health = %d %s", response.StatusCode, body.String())
 			}
 		})
@@ -338,14 +377,24 @@ func TestAdapterConfigRefusesWhatItCannotUse(t *testing.T) {
 	s := session(t, startAdapter(t, spec, fake, adapter.Config{ServiceURL: service.URL + "/"}))
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if _, err := s.CallTool(ctx, &mcp.CallToolParams{Name: "get_items", Arguments: map[string]any{"name": "a"}}); err != nil ||
-		len(fake.requests) != 1 || fake.requests[0] != "GET /v1/api/items?name=a" {
+	if _, err := s.CallTool(
+		ctx,
+		&mcp.CallToolParams{Name: "get_items", Arguments: map[string]any{"name": "a"}},
+	); err != nil ||
+		len(fake.requests) != 1 ||
+		fake.requests[0] != "GET /v1/api/items?name=a" {
 		t.Fatalf("forwarded %v, %v", fake.requests, err)
 	}
-	if _, err := adapter.InputSchema([]endpoint.Parameter{{Name: "a"}, {Name: "b"}}, map[string]*jsonschema.Schema{"a": {}}); err == nil {
+	if _, err := adapter.InputSchema(
+		[]endpoint.Parameter{{Name: "a"}, {Name: "b"}},
+		map[string]*jsonschema.Schema{"a": {}},
+	); err == nil {
 		t.Fatal("a parameter without a shape was accepted")
 	}
-	if _, err := adapter.InputSchema([]endpoint.Parameter{{Name: "a"}}, map[string]*jsonschema.Schema{"b": {}}); err == nil {
+	if _, err := adapter.InputSchema(
+		[]endpoint.Parameter{{Name: "a"}},
+		map[string]*jsonschema.Schema{"b": {}},
+	); err == nil {
 		t.Fatal("a shape for another parameter was accepted")
 	}
 }
@@ -368,7 +417,11 @@ func TestSmokePassesOnlyAgainstAWorkingAdapter(t *testing.T) {
 	}
 	wrongRefusal := testAdapter("get_items")
 	wrongRefusal.Smoke = func(string) adapter.SmokeTest {
-		return adapter.SmokeTest{Good: map[string]any{"name": "a"}, Bad: map[string]any{"name": "html"}, BadCode: problem.ExchangeNotFound}
+		return adapter.SmokeTest{
+			Good:    map[string]any{"name": "a"},
+			Bad:     map[string]any{"name": "html"},
+			BadCode: problem.ExchangeNotFound,
+		}
 	}
 	if err := smoke(wrongRefusal, &fakeItems{}); err == nil {
 		t.Fatal("smoke passed with the wrong refusal")

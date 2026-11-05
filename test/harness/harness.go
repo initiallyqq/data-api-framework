@@ -132,6 +132,8 @@ type Process struct {
 	done    chan struct{}
 }
 
+// Write records the process's output; it is the process's stdout and
+// stderr.
 func (p *Process) Write(data []byte) (int, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -228,11 +230,17 @@ type Service struct {
 	Process *Process
 }
 
+// Upstream is the DolphinDB a service under test reads: d's database, at
+// Address (d.Address, or one where nothing answers).
+type Upstream struct {
+	*DolphinDB
+	Address string
+}
+
 // StartService runs the service binary with a configuration in root that
-// reads d's database at dolphinAddress (d.Address, or one where nothing
-// answers): the keys configs/<service>.yaml holds, with SQLite and secrets in
-// root. A restart with the same root finds the same SQLite copy.
-func StartService(t *testing.T, binary, root string, d *DolphinDB, dolphinAddress string) *Service {
+// reads upstream: the keys configs/<service>.yaml holds, with SQLite and
+// secrets in root. A restart with the same root finds the same SQLite copy.
+func StartService(t *testing.T, binary, root string, upstream Upstream) *Service {
 	t.Helper()
 	address := FreeAddress(t)
 	credentials := filepath.Join(root, "dolphindb.env")
@@ -245,9 +253,9 @@ func StartService(t *testing.T, binary, root string, d *DolphinDB, dolphinAddres
 		"databasePath: " + filepath.ToSlash(filepath.Join(root, "sqlite", "copy.db")),
 		"backupPath: " + filepath.ToSlash(filepath.Join(root, "sqlite", "last-good.db")),
 		"adminTokenFile: " + filepath.ToSlash(token),
-		"dolphinDBAddress: " + dolphinAddress,
+		"dolphinDBAddress: " + upstream.Address,
 		"dolphinDBCredentialsFile: " + filepath.ToSlash(credentials),
-		"dolphinDBDatabase: " + d.Database,
+		"dolphinDBDatabase: " + upstream.Database,
 		"",
 	}, "\n"))
 	return &Service{URL: "http://" + address, Process: Start(t, binary, "--config", config)}
@@ -269,12 +277,13 @@ func (s *Service) Sync(t *testing.T) {
 	}
 }
 
-// StartAdapter runs the MCP adapter binary in front of the service at
-// serviceURL and connects an MCP client to it.
-func StartAdapter(t *testing.T, binary, urlFlag, serviceURL string) (*mcp.ClientSession, string) {
+// StartAdapter runs the MCP adapter binary in front of a service, named by
+// service as the adapter's flag and value (for example "--calendar-url" and
+// the service's URL), and connects an MCP client to it.
+func StartAdapter(t *testing.T, binary string, service [2]string) (*mcp.ClientSession, string) {
 	t.Helper()
 	address := FreeAddress(t)
-	adapter := Start(t, binary, "--listen-addr", address, urlFlag, serviceURL)
+	adapter := Start(t, binary, "--listen-addr", address, service[0], service[1])
 	WaitHealthy(t, "http://"+address+"/healthz", adapter)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -287,12 +296,14 @@ func StartAdapter(t *testing.T, binary, urlFlag, serviceURL string) (*mcp.Client
 	return session, "http://" + address + "/mcp"
 }
 
-// Call calls tool and returns its text and whether it is a tool error.
-func Call(t *testing.T, session *mcp.ClientSession, tool string, arguments map[string]any) (string, bool) {
+// Call makes the tool call and returns its text and whether it is a tool
+// error.
+func Call(t *testing.T, session *mcp.ClientSession, call *mcp.CallToolParams) (string, bool) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: tool, Arguments: arguments})
+	tool, arguments := call.Name, call.Arguments
+	result, err := session.CallTool(ctx, call)
 	if err != nil {
 		t.Fatalf("call %s %v: %v", tool, arguments, err)
 	}

@@ -11,9 +11,10 @@ import (
 	"time"
 )
 
-// Run serves handler on addr until ctx ends, then shuts it down gracefully.
-func Run(ctx context.Context, name, addr string, handler http.Handler, readTimeout, writeTimeout time.Duration) error {
-	server := &http.Server{
+// Server is the HTTP server a binary runs: handler on addr, with the read
+// and write timeouts its slowest answer needs.
+func Server(addr string, handler http.Handler, readTimeout, writeTimeout time.Duration) *http.Server {
+	return &http.Server{
 		Addr:              addr,
 		Handler:           handler,
 		ReadHeaderTimeout: 15 * time.Second,
@@ -21,9 +22,13 @@ func Run(ctx context.Context, name, addr string, handler http.Handler, readTimeo
 		WriteTimeout:      writeTimeout,
 		IdleTimeout:       60 * time.Second,
 	}
+}
+
+// Run serves server until ctx ends, then shuts it down gracefully.
+func Run(ctx context.Context, name string, server *http.Server) error {
 	errCh := make(chan error, 1)
 	go func() {
-		fmt.Printf("%s listening on %s\n", name, addr)
+		fmt.Printf("%s listening on %s\n", name, server.Addr)
 		errCh <- server.ListenAndServe()
 	}()
 	select {

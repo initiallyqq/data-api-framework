@@ -65,6 +65,7 @@ func Connect(ctx context.Context, source Source) (*Session, error) {
 	return &Session{client: client, database: source.Database}, nil
 }
 
+// Close closes the connection.
 func (s *Session) Close() error { return s.client.Close() }
 
 // Tables lists the tables of the database, in name order.
@@ -88,19 +89,27 @@ func (s *Session) Tables(ctx context.Context) ([]string, error) {
 	return names, nil
 }
 
-// Select reads `select columns from table [where where]` and decodes every
-// row into T with encoding/json: columns names each column as T's json tags
-// do. A failure fails the whole read, never a part of it.
-func Select[T any](ctx context.Context, s *Session, table, columns, where string) ([]T, error) {
+// Query is `select Columns from Table [where Where]` over the session's
+// database. Columns names each column as the row type's json tags do.
+type Query struct {
+	Table   string
+	Columns string
+	Where   string
+}
+
+// Select runs q and decodes every row into T with encoding/json. A failure
+// fails the whole read, never a part of it.
+func Select[T any](ctx context.Context, s *Session, q Query) ([]T, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	table := q.Table
 	if !safeName(table) {
 		return nil, fmt.Errorf("table name %q cannot be written into a DolphinDB script", table)
 	}
-	script := fmt.Sprintf("select %s from loadTable(%q, `%s)", columns, s.database, table)
-	if where != "" {
-		script += " where " + where
+	script := fmt.Sprintf("select %s from loadTable(%q, `%s)", q.Columns, s.database, table)
+	if q.Where != "" {
+		script += " where " + q.Where
 	}
 	result, err := s.client.RunScript(script)
 	if err != nil {
@@ -125,7 +134,8 @@ func Select[T any](ctx context.Context, s *Session, table, columns, where string
 // can be written into a script as is.
 func safeName(value string) bool {
 	for _, r := range value {
-		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-' || r == '.' {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-' ||
+			r == '.' {
 			continue
 		}
 		return false

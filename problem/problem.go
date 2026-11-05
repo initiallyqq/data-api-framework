@@ -22,6 +22,8 @@ var TypeBase string
 // one set.
 type Code string
 
+// The codes every data-api endpoint answers with; catalogue fixes each
+// one's status and title.
 const (
 	MissingParameter   Code = "MISSING_PARAMETER"
 	InvalidParameter   Code = "INVALID_PARAMETER"
@@ -85,6 +87,8 @@ type Details struct {
 	RequestID string   `json:"request_id,omitempty"`
 }
 
+// New is the problem code names, with detail. An unknown code is
+// INTERNAL_ERROR.
 func New(code Code, detail string) *Details {
 	entry, ok := catalogue[code]
 	if !ok {
@@ -98,7 +102,10 @@ func New(code Code, detail string) *Details {
 // answer names the missing ones and what exists, and nothing else is
 // returned, because half an answer would read as "not there".
 func NotFound(code Code, parameter string, missing, available []string) *Details {
-	answer := New(code, parameter+" not found: "+strings.Join(missing, ", ")+"; available: "+strings.Join(available, ", "))
+	answer := New(
+		code,
+		parameter+" not found: "+strings.Join(missing, ", ")+"; available: "+strings.Join(available, ", "),
+	)
 	answer.Parameter, answer.Values, answer.Available = parameter, missing, available
 	return answer
 }
@@ -109,6 +116,7 @@ func (p *Details) ForParameter(name string) *Details {
 	return p
 }
 
+// Error is the code and the detail.
 func (p *Details) Error() string { return string(p.Code) + ": " + p.Detail }
 
 // MarshalJSON writes the problem with two more members, error and message,

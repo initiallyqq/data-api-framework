@@ -79,9 +79,17 @@ type onlineBackupConn interface {
 	NewBackup(string) (*sqlite.Backup, error)
 }
 
-// Open opens the copy at path, laid out by layout; version is the
-// layout's schema version, which sync_state records.
-func Open[R any](path, backupPath string, version int, layout Layout[R]) (*Store[R], error) {
+// Files are where a copy lives: the SQLite file it is served from and the
+// last-good backup kept beside it.
+type Files struct {
+	Path       string
+	BackupPath string
+}
+
+// Open opens the copy in files, laid out by layout; version is the layout's
+// schema version, which sync_state records.
+func Open[R any](files Files, version int, layout Layout[R]) (*Store[R], error) {
+	path, backupPath := files.Path, files.BackupPath
 	for _, dir := range []string{filepath.Dir(path), filepath.Dir(backupPath)} {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return nil, fmt.Errorf("create SQLite directory: %w", err)
@@ -128,6 +136,7 @@ func sqliteDSN(path string, readOnly bool) string {
 	return uri.String()
 }
 
+// Close closes the copy's database.
 func (s *Store[R]) Close() error { return s.db.Close() }
 
 // Migrate prepares a new file and accepts an existing one only if this
@@ -142,12 +151,20 @@ func (s *Store[R]) Migrate(ctx context.Context) error {
 	}
 	if !slices.Contains(tables, "sync_state") {
 		if len(tables) > 0 {
-			return fmt.Errorf("SQLite database holds %s but no sync_state: another layout wrote it; move it aside", strings.Join(tables, ", "))
+			return fmt.Errorf(
+				"SQLite database holds %s but no sync_state: another layout wrote it; move it aside",
+				strings.Join(tables, ", "),
+			)
 		}
 		return s.initialize(ctx)
 	}
 	var version int
-	if err := s.db.QueryRowContext(ctx, `SELECT schema_version FROM sync_state WHERE singleton = 1`).Scan(&version); err != nil {
+	if err := s.db.QueryRowContext(
+		ctx,
+		`SELECT schema_version FROM sync_state WHERE singleton = 1`,
+	).Scan(
+		&version,
+	); err != nil {
 		return fmt.Errorf("read SQLite schema version: %w", err)
 	}
 	if version != s.version {
@@ -173,7 +190,11 @@ func (s *Store[R]) initialize(ctx context.Context) error {
 		)`); err != nil {
 		return fmt.Errorf("initialize SQLite schema: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO sync_state (singleton, schema_version) VALUES (1, ?)`, s.version); err != nil {
+	if _, err := tx.ExecContext(
+		ctx,
+		`INSERT INTO sync_state (singleton, schema_version) VALUES (1, ?)`,
+		s.version,
+	); err != nil {
 		return fmt.Errorf("initialize SQLite schema: %w", err)
 	}
 	return tx.Commit()
@@ -309,7 +330,12 @@ func (s *Store[R]) Read(ctx context.Context, read func(Queryer) error) error {
 	}
 	defer tx.Rollback()
 	var digest string
-	if err := tx.QueryRowContext(ctx, `SELECT state_digest FROM sync_state WHERE singleton = 1`).Scan(&digest); err != nil {
+	if err := tx.QueryRowContext(
+		ctx,
+		`SELECT state_digest FROM sync_state WHERE singleton = 1`,
+	).Scan(
+		&digest,
+	); err != nil {
 		return err
 	}
 	if digest == "" {
@@ -357,7 +383,12 @@ func (s *Store[R]) Synchronize(ctx context.Context, rows []R, sourceSuccessAt ti
 		}
 	}()
 	var current string
-	if err := conn.QueryRowContext(ctx, `SELECT state_digest FROM sync_state WHERE singleton = 1`).Scan(&current); err != nil {
+	if err := conn.QueryRowContext(
+		ctx,
+		`SELECT state_digest FROM sync_state WHERE singleton = 1`,
+	).Scan(
+		&current,
+	); err != nil {
 		return SyncResult{}, err
 	}
 	changed := current != digest

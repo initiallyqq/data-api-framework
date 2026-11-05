@@ -24,7 +24,9 @@ func TestParametersAreCheckedAndListsRead(t *testing.T) {
 	if strings.Join(got, ",") != "B,A,C" {
 		t.Fatalf("list = %v, want B,A,C: trimmed, normalized, repeats dropped, order kept", got)
 	}
-	if fields := endpoint.FieldList([]endpoint.Field{{Name: "a", Comment: "甲"}, {Name: "b", Comment: "乙"}}); fields != "a (甲), b (乙)" {
+	if fields := endpoint.FieldList(
+		[]endpoint.Field{{Name: "a", Comment: "甲"}, {Name: "b", Comment: "乙"}},
+	); fields != "a (甲), b (乙)" {
 		t.Fatalf("fields = %q", fields)
 	}
 }

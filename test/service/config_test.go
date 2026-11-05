@@ -31,8 +31,8 @@ func TestLoadConfigFillsDefaultsAndRefusesWhatItCannotRunWith(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if config.ListenAddr != ":8091" || config.RequestTimeout != 30*time.Second ||
-		config.SyncInterval != time.Hour || config.SyncRetryInterval != 5*time.Minute || config.MaxStaleness != 48*time.Hour {
+	if config.ListenAddr != ":8091" || config.RequestTimeout != 30*time.Second || config.SyncInterval != time.Hour ||
+		config.SyncRetryInterval != 5*time.Minute || config.MaxStaleness != 48*time.Hour {
 		t.Fatalf("defaults = %+v", config)
 	}
 	for index := range required {
@@ -41,7 +41,17 @@ func TestLoadConfigFillsDefaultsAndRefusesWhatItCannotRunWith(t *testing.T) {
 			t.Fatalf("a configuration without %q was accepted", required[index])
 		}
 	}
-	if _, err := service.LoadConfig(write("databasePath: /var/lib/x/copy.db", "backupPath: /var/lib/x/../x/copy.db", required[2], required[3], required[4], required[5]), ":8091"); err == nil {
+	if _, err := service.LoadConfig(
+		write(
+			"databasePath: /var/lib/x/copy.db",
+			"backupPath: /var/lib/x/../x/copy.db",
+			required[2],
+			required[3],
+			required[4],
+			required[5],
+		),
+		":8091",
+	); err == nil {
 		t.Fatal("one file as copy and backup was accepted")
 	}
 	// A key the service does not read, such as one an older release had,

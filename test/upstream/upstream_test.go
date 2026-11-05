@@ -27,7 +27,10 @@ func TestConnectReadsTheShellEnvFile(t *testing.T) {
 		return path
 	}
 	connect := func(address, credentials string) error {
-		session, err := upstream.Connect(context.Background(), upstream.Source{Address: address, CredentialsFile: credentials, Database: "dfs://example"})
+		session, err := upstream.Connect(
+			context.Background(),
+			upstream.Source{Address: address, CredentialsFile: credentials, Database: "dfs://example"},
+		)
 		if err == nil {
 			session.Close()
 		}
@@ -39,16 +42,31 @@ func TestConnectReadsTheShellEnvFile(t *testing.T) {
 		"DDB_USER=\"admin\"\nDDB_PASSWORD=123456\n",
 	}
 	for _, content := range accepted {
-		if err := connect("127.0.0.1:1", write(content)); err == nil || !strings.Contains(err.Error(), "connect DolphinDB") {
+		if err := connect(
+			"127.0.0.1:1",
+			write(content),
+		); err == nil ||
+			!strings.Contains(err.Error(), "connect DolphinDB") {
 			t.Fatalf("%q did not reach the dial: %v", content, err)
 		}
 	}
-	for _, content := range []string{"DDB_USER=a\n", "DDB_PASSWORD=b\n", "DDB_USER=a\nDDB_PASSWORD=$(cat secret)\n", "DDB_USER=a\nDDB_PASSWORD='open\n", "DDB_USER=a\nDDB_PASSWORD=\"x\n"} {
-		if err := connect("127.0.0.1:1", write(content)); err == nil || strings.Contains(err.Error(), "connect DolphinDB") {
+	for _, content := range []string{
+		"DDB_USER=a\n", "DDB_PASSWORD=b\n", "DDB_USER=a\nDDB_PASSWORD=$(cat secret)\n",
+		"DDB_USER=a\nDDB_PASSWORD='open\n", "DDB_USER=a\nDDB_PASSWORD=\"x\n",
+	} {
+		if err := connect(
+			"127.0.0.1:1",
+			write(content),
+		); err == nil ||
+			strings.Contains(err.Error(), "connect DolphinDB") {
 			t.Fatalf("%q was accepted: %v", content, err)
 		}
 	}
-	if err := connect("127.0.0.1:1", filepath.Join(t.TempDir(), "missing.env")); err == nil || strings.Contains(err.Error(), "connect DolphinDB") {
+	if err := connect(
+		"127.0.0.1:1",
+		filepath.Join(t.TempDir(), "missing.env"),
+	); err == nil ||
+		strings.Contains(err.Error(), "connect DolphinDB") {
 		t.Fatalf("a missing file was accepted: %v", err)
 	}
 	address := os.Getenv("DATA_API_E2E_DOLPHINDB_ADDRESS")
@@ -67,26 +85,39 @@ func TestNothingUnsafeIsWrittenIntoAScript(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, database := range []string{"example", "dfs://", "dfs://example\");drop", "dfs://ex ample"} {
-		if _, err := upstream.Connect(context.Background(), upstream.Source{Address: "127.0.0.1:1", CredentialsFile: credentials, Database: database}); err == nil ||
+		if _, err := upstream.Connect(
+			context.Background(),
+			upstream.Source{Address: "127.0.0.1:1", CredentialsFile: credentials, Database: database},
+		); err == nil ||
 			!strings.Contains(err.Error(), "dfs://<name>") {
 			t.Fatalf("database %q: %v", database, err)
 		}
 	}
 	for _, table := range []string{"", "x`y", "x y", "x\"); drop"} {
-		if _, err := upstream.Select[struct{}](context.Background(), &upstream.Session{}, table, "*", ""); err == nil {
+		if _, err := upstream.Select[struct{}](
+			context.Background(),
+			&upstream.Session{},
+			upstream.Query{Table: table, Columns: "*"},
+		); err == nil {
 			t.Fatalf("table %q was accepted", table)
 		}
 	}
 }
 
 func TestDolphinDBDatesAndTimes(t *testing.T) {
-	for value, want := range map[string]string{"2026.09.30": "2026-09-30", "2026-09-30": "2026-09-30", " 2026.01.02 ": "2026-01-02"} {
+	for value, want := range map[string]string{
+		"2026.09.30": "2026-09-30", "2026-09-30": "2026-09-30", " 2026.01.02 ": "2026-01-02",
+	} {
 		if got, err := upstream.ParseDate("d", value); err != nil || got != want {
 			t.Fatalf("ParseDate(%q) = %q, %v", value, got, err)
 		}
 	}
 	for _, value := range []string{"", "2026/09/30", "30.09.2026", "2026.13.01"} {
-		if _, err := upstream.ParseDate("d", value); err == nil || !strings.Contains(err.Error(), "d must be a DolphinDB DATE") {
+		if _, err := upstream.ParseDate(
+			"d",
+			value,
+		); err == nil ||
+			!strings.Contains(err.Error(), "d must be a DolphinDB DATE") {
 			t.Fatalf("ParseDate(%q) = %v", value, err)
 		}
 	}
@@ -102,7 +133,11 @@ func TestDolphinDBDatesAndTimes(t *testing.T) {
 		}
 	}
 	for _, value := range []string{"", "soon", "2026.08.27", "2026.08.27 22:08:29+08:00"} {
-		if _, err := upstream.ParseDateTime("t", value); err == nil || !strings.Contains(err.Error(), "t must be a DolphinDB DATETIME") {
+		if _, err := upstream.ParseDateTime(
+			"t",
+			value,
+		); err == nil ||
+			!strings.Contains(err.Error(), "t must be a DolphinDB DATETIME") {
 			t.Fatalf("ParseDateTime(%q) = %v", value, err)
 		}
 	}
