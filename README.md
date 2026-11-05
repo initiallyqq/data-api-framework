@@ -40,11 +40,9 @@ go mod tidy
 
 两个服务要用同一个版本。改动还没打 tag 时，在服务仓旁边建一个不提交的 `go.work`（`go work init . ../data-api-framework`）在本地联调。
 
-本仓是私有仓。拉取它需要：
+本仓是公开仓，`go get` 走模块代理即可，不需要凭据。若在没法访问代理的环境里要直连 GitHub，再配：
 
 ```bash
 go env -w GOPRIVATE=github.com/initiallyqq/data-api-framework
 git config --global url."git@github.com:".insteadOf https://github.com/
 ```
-
-并且有能读本仓的 SSH 密钥。
