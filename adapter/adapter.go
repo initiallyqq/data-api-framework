@@ -133,6 +133,7 @@ func (a Spec) Handler(config Config) (http.Handler, error) {
 		// advertises it by default).
 		Capabilities: &mcp.ServerCapabilities{Tools: &mcp.ToolCapabilities{}},
 	})
+	server.AddReceivingMiddleware(objectOnlyStructuredContent)
 	if err := a.Register(server, client); err != nil {
 		return nil, err
 	}
@@ -189,6 +190,31 @@ func (a Spec) Handler(config Config) (http.Handler, error) {
 		transport.ServeHTTP(w, r)
 	})
 	return mux, nil
+}
+
+// anyStructuredContent is the first MCP revision whose structuredContent may
+// be any JSON value (SEP-2106); the revisions before it declare an object.
+const anyStructuredContent = "2026-07-28"
+
+// objectOnlyStructuredContent drops a tools/call result's structuredContent
+// that is not a JSON object when the call speaks a revision before
+// anyStructuredContent: clients of those revisions (the Python SDK among
+// them) reject the whole result otherwise. The same JSON stays in the text
+// content, which is what SEP-2106 asks of a server for such clients.
+func objectOnlyStructuredContent(next mcp.MethodHandler) mcp.MethodHandler {
+	return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+		result, err := next(ctx, method, req)
+		call, ok := req.(*mcp.CallToolRequest)
+		if err != nil || !ok || call.ProtocolVersion() >= anyStructuredContent {
+			return result, err
+		}
+		if answer, ok := result.(*mcp.CallToolResult); ok && answer.StructuredContent != nil {
+			if encoded, err := json.Marshal(answer.StructuredContent); err != nil || encoded[0] != '{' {
+				answer.StructuredContent = nil
+			}
+		}
+		return result, nil
+	}
 }
 
 // health reports the adapter healthy exactly when the service is: the
@@ -261,9 +287,10 @@ func (c *Client) get(ctx context.Context, path string) (int, []byte, error) {
 }
 
 // Call is one GET of the service's path with query: the rows the service
-// answers become the tool's result, unchanged; a problem it answers becomes
-// a tool error carrying the same problem, so an agent branches on the code
-// an HTTP caller sees.
+// answers become the tool's result, unchanged (as text only for a call of a
+// revision before 2026-07-28, see objectOnlyStructuredContent); a problem it
+// answers becomes a tool error carrying the same problem, so an agent
+// branches on the code an HTTP caller sees.
 func (c *Client) Call(ctx context.Context, path string, query url.Values) *mcp.CallToolResult {
 	if len(query) > 0 {
 		path += "?" + query.Encode()
