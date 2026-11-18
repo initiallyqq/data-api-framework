@@ -26,7 +26,7 @@ data-api 的数据服务共用的 Go 模块：把上游 DolphinDB 表同步成�
 
 ## 背景
 
-data-api 下的数据服务形状相同：一组上游 DolphinDB 表变成一份本地 SQLite 副本，副本对外是一个只读 HTTP 查询，同一个查询再包成一个 MCP 工具。交易日历与代码映射两个服务因此共用这个模块；各服务仓库只写自己的数据形状——行类型、副本里的表、DolphinDB 查询、HTTP 端点的语义、MCP 工具的参数。
+data-api 下的数据服务形状相同：一组上游 DolphinDB 表变成一份本地 SQLite 副本，副本对外是一个只读 HTTP 查询，同一个查询再包成一个 MCP 工具。交易日历（`trade-calendar-service`）与代码映射（`code-mapping-service`）两个服务因此共用这个模块；各服务仓库只写自己的数据形状——行类型、副本里的表、DolphinDB 查询、HTTP 端点的语义、MCP 工具的参数。
 
 其余行为由模块统一提供：按间隔把上游整表取回、在一个事务里整体替换副本、校验并备份副本、把同步状态与数据新鲜度做成健康响应、把失败写成 RFC 9457 错误体、按 MCP 协议版本组织工具结果。
 
@@ -221,7 +221,7 @@ RFC 9457 错误体。一个 `Code` 定死了 HTTP 状态与标题；`Details` �
 | 名字 | 说明 |
 | --- | --- |
 | `MediaType` | 错误体的媒体类型 `application/problem+json` |
-| `TypeBase` | `type` 字段的前缀，与码拼成 RFC 9457 的类型 URI |
+| `TypeBase` | `type` 字段的前缀，与码拼成 RFC 9457 的类型 URI；各服务在 `init()` 里设成自己公开地址下的一个 URI |
 | `Code` | 码的类型 |
 | `Details` | 错误体 |
 | `Details.Error` | 让 `Details` 实现 `error` |
@@ -445,7 +445,7 @@ initial synchronization failed; serving existing SQLite state: <err>
 MCP 协议版本：
 
 - 2026-07-28 及以后：结果的 `content` 里有 `text`（一份 JSON），`structuredContent` 里是同一个 JSON 对象。
-- 2026-07-28 之前：`structuredContent` 只在是 JSON 对象时给；数组会从 `structuredContent` 去掉，同一份 JSON 仍在 `text` 里（SEP-2106）。只认 `structuredContent` 的客户端因此拿不到非对象结果，但不会因为类型不对而报错。
+- 2026-07-28 之前（`2024-11-05`、`2025-03-26`、`2025-06-18`、`2025-11-25` 这些修订，Python SDK 1.x / 2.x 用的就是它们）：`structuredContent` 只在是 JSON 对象时给；数组会从 `structuredContent` 去掉，同一份 JSON 仍在 `text` 里（SEP-2106）。只认 `structuredContent` 的客户端因此拿不到非对象结果，但不会因为类型不对而报错。
 
 适配器的命令行：
 
@@ -462,7 +462,7 @@ MCP 协议版本：
 
 | 名字 | 说明 |
 | --- | --- |
-| `Version` | 版本号，默认 `dev`，发布时用 `-ldflags -X github.com/initiallyqq/data-api-framework/buildinfo.Version=` 注入 |
+| `Version` | 版本号，默认 `dev`，发布构建时用 `-ldflags "-X github.com/initiallyqq/data-api-framework/buildinfo.Version=<版本>"` 注入 |
 
 ### test/harness
 
@@ -532,13 +532,15 @@ go get github.com/initiallyqq/data-api-framework@vX.Y.Z
 go mod tidy
 ```
 
-同时改多个仓库时用 `go.work` 把本仓库与消费方放在一起联调，避免反复发布版本：
+两个数据服务在 `data-api` 同一个 module 里，用的是同一个版本。
+
+同时改多个仓库时用 `go.work` 把本仓库与消费方放在一起联调，避免反复发布版本。在消费方仓库的根目录执行，`go.work` 不提交：
 
 ```sh
-go work use ../data-api-framework
+go work init . ../data-api-framework
 ```
 
-没有模块代理的环境里让 Go 直接走 Git，并把仓库地址指到可用的镜像：
+本仓库是公开仓，`go get` 走模块代理即可，不需要凭据。没有模块代理的环境里让 Go 直接走 Git，并把仓库地址指到可用的镜像：
 
 ```sh
 export GOPRIVATE=github.com/initiallyqq/*
